@@ -124,23 +124,83 @@ CREATE TABLE `boiler` (
   UNIQUE KEY `uk_boiler_no` (`boiler_no`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='余热锅炉';
 
--- ---------------- 6. 汽轮发电机组 ----------------
+-- ---------------- 6. 汽轮发电机组（机组当前表码与基数状态，每日一行的日结见 generation_daily） ----------------
+DROP TABLE IF EXISTS `meter_event`;
+DROP TABLE IF EXISTS `generation_daily`;
 DROP TABLE IF EXISTS `turbine_generator`;
 CREATE TABLE `turbine_generator` (
-  `id`             BIGINT       NOT NULL AUTO_INCREMENT,
-  `unit_no`        VARCHAR(32)  NOT NULL COMMENT '机组编号',
-  `unit_name`      VARCHAR(64)  DEFAULT NULL COMMENT '机组名称',
-  `capacity_mw`    DECIMAL(8,2) DEFAULT NULL COMMENT '装机容量 MW',
-  `generation_kwh` DECIMAL(14,2) DEFAULT NULL COMMENT '发电量 kWh',
-  `grid_kwh`       DECIMAL(14,2) DEFAULT NULL COMMENT '上网电量 kWh',
-  `auxiliary_rate` DECIMAL(5,2) DEFAULT NULL COMMENT '厂用电率 %',
-  `running_hours`  DECIMAL(10,1) DEFAULT NULL COMMENT '运行小时 h',
-  `stat_date`      DATE         DEFAULT NULL COMMENT '统计日期',
-  `status`         VARCHAR(16)  DEFAULT NULL COMMENT '状态 ON_GRID/IDLE/OVERHAUL',
-  `remark`         VARCHAR(128) DEFAULT NULL,
+  `id`                     BIGINT       NOT NULL AUTO_INCREMENT,
+  `unit_no`                VARCHAR(32)  NOT NULL COMMENT '机组编号',
+  `unit_name`              VARCHAR(64)  DEFAULT NULL COMMENT '机组名称',
+  `capacity_mw`            DECIMAL(8,2) DEFAULT NULL COMMENT '装机容量 MW',
+  `meter_reading_kwh`      DECIMAL(16,2) DEFAULT NULL COMMENT '发电电能表当前累计表码 kWh（日结基数，非当日发电量）',
+  `grid_meter_reading_kwh` DECIMAL(16,2) DEFAULT NULL COMMENT '上网关口表当前累计表码 kWh',
+  `meter_source`           VARCHAR(24)  NOT NULL DEFAULT 'SEED' COMMENT '当前基数来源 SEED/PREV_DAY/RESET_NEW_BASE',
+  `meter_status`           VARCHAR(24)  NOT NULL DEFAULT 'NORMAL' COMMENT '表计状态 NORMAL/METER_HELD（暂停日结待校表）',
+  `generation_kwh`         DECIMAL(14,2) DEFAULT NULL COMMENT '最近日结当日发电量 kWh（增量）',
+  `grid_kwh`               DECIMAL(14,2) DEFAULT NULL COMMENT '最近日结当日上网电量 kWh（增量）',
+  `auxiliary_rate`         DECIMAL(5,2) DEFAULT NULL COMMENT '最近日结厂用电率 %',
+  `running_hours`          DECIMAL(10,1) DEFAULT NULL COMMENT '最近日结运行小时 h',
+  `stat_date`              DATE         DEFAULT NULL COMMENT '最近已日结统计日期',
+  `status`                 VARCHAR(16)  DEFAULT NULL COMMENT '机组状态 ON_GRID/IDLE/OVERHAUL',
+  `version`                INT          NOT NULL DEFAULT 0 COMMENT '乐观锁：两人同时日结只成功一份',
+  `remark`                 VARCHAR(128) DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_unit_no` (`unit_no`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='汽轮发电机组';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='汽轮发电机组（当前表码/基数状态）';
+
+-- 日结：按机组 + 统计日唯一，当日发电量 = 期末表码 − 基数（相邻表码），保留每日计算依据
+CREATE TABLE `generation_daily` (
+  `id`                        BIGINT       NOT NULL AUTO_INCREMENT,
+  `unit_no`                   VARCHAR(32)  NOT NULL COMMENT '机组编号',
+  `stat_date`                 DATE         NOT NULL COMMENT '统计日',
+  `base_reading_kwh`          DECIMAL(16,2) NOT NULL COMMENT '发电表期初基数（相邻上日封账表码）',
+  `closing_reading_kwh`       DECIMAL(16,2) NOT NULL COMMENT '发电表期末表码（当日当前表码）',
+  `generation_kwh`            DECIMAL(14,2) NOT NULL COMMENT '当日发电增量 = 期末 − 基数（换表时为旧表尾段 + 新表首段）',
+  `grid_base_reading_kwh`     DECIMAL(16,2) DEFAULT NULL COMMENT '上网表期初基数',
+  `grid_closing_reading_kwh`  DECIMAL(16,2) DEFAULT NULL COMMENT '上网表期末表码',
+  `grid_kwh`                  DECIMAL(14,2) DEFAULT NULL COMMENT '当日上网电量增量',
+  `auxiliary_rate`            DECIMAL(5,2) NOT NULL COMMENT '厂用电率 % = (发电增量 − 上网增量)/发电增量',
+  `running_hours`             DECIMAL(10,1) NOT NULL COMMENT '当日运行小时 h',
+  `base_type`                 VARCHAR(24)  NOT NULL COMMENT '基数来源 SEED/PREV_DAY/RESET_NEW_BASE',
+  `abnormal_type`             VARCHAR(16)  DEFAULT NULL COMMENT '异常类型 ROLLBACK 回拨 / REPLACE 更换',
+  `resolution`                VARCHAR(32)  DEFAULT NULL COMMENT '异常处置 SETTLED_NEW_BASE 封账启用新基数',
+  `abnormal_status`           VARCHAR(24)  NOT NULL DEFAULT 'NORMAL' COMMENT '异常状态 NORMAL/ROLLBACK_RESET/REPLACE_RESET',
+  `meter_event_id`            BIGINT       DEFAULT NULL COMMENT '关联表计事件',
+  `operator`                  VARCHAR(32)  DEFAULT NULL COMMENT '日结操作人',
+  `request_id`                VARCHAR(64)  DEFAULT NULL COMMENT '页面请求凭据（同凭据重发幂等返回原日结）',
+  `remark`                    VARCHAR(255) DEFAULT NULL COMMENT '计算依据备注（旧表止码/新表起码等）',
+  `create_time`               DATETIME     NOT NULL COMMENT '创建时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_unit_stat_date` (`unit_no`, `stat_date`),
+  KEY `idx_daily_unit_date` (`unit_no`, `stat_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='发电机组日结（表码增量口径）';
+
+-- 表计回拨 / 更换事件留痕：封账启用新基数 或 暂停等待校表，两种选择都影响后续增量口径
+CREATE TABLE `meter_event` (
+  `id`                         BIGINT       NOT NULL AUTO_INCREMENT,
+  `event_no`                   VARCHAR(40)  NOT NULL COMMENT '事件编号',
+  `unit_no`                    VARCHAR(32)  NOT NULL COMMENT '机组编号',
+  `stat_date`                  DATE         NOT NULL COMMENT '发现异常时所申报的统计日',
+  `event_type`                 VARCHAR(16)  NOT NULL COMMENT '事件类型 ROLLBACK 表计回拨 / REPLACE 表计更换',
+  `previous_base_reading_kwh`  DECIMAL(16,2) NOT NULL COMMENT '异常前日结基数',
+  `observed_reading_kwh`       DECIMAL(16,2) NOT NULL COMMENT '本次申报表码（回拨后读数或新表读数）',
+  `old_meter_final_reading_kwh` DECIMAL(16,2) DEFAULT NULL COMMENT '旧表封账止码（换表/封账时）',
+  `new_meter_start_reading_kwh` DECIMAL(16,2) DEFAULT NULL COMMENT '新表起码',
+  `resolution`                 VARCHAR(32)  NOT NULL COMMENT '选择 SETTLED_NEW_BASE 旧表封账启用新基数 / HELD_PENDING_CALIBRATION 暂停日结等待校表',
+  `event_status`               VARCHAR(16)  NOT NULL DEFAULT 'OPEN' COMMENT '状态 OPEN 待校表 / RESOLVED 已校表恢复',
+  `daily_id`                   BIGINT       DEFAULT NULL COMMENT '封账选择对应的日结 id',
+  `release_reading_kwh`        DECIMAL(16,2) DEFAULT NULL COMMENT '校表后确认的新基数',
+  `operator`                   VARCHAR(32)  DEFAULT NULL COMMENT '决策操作人',
+  `note`                       VARCHAR(255) DEFAULT NULL COMMENT '决策说明',
+  `release_operator`           VARCHAR(32)  DEFAULT NULL COMMENT '校表恢复操作人',
+  `release_note`               VARCHAR(255) DEFAULT NULL COMMENT '校表恢复说明',
+  `create_time`                DATETIME     NOT NULL COMMENT '创建时间',
+  `resolve_time`               DATETIME     DEFAULT NULL COMMENT '校表恢复时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_meter_event_no` (`event_no`),
+  KEY `idx_meter_event_unit` (`unit_no`, `event_status`, `stat_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='表计回拨/更换事件与处置留痕';
 
 -- ---------------- 7. 烟气排放指标 ----------------
 DROP TABLE IF EXISTS `emission_record`;
@@ -372,13 +432,32 @@ INSERT INTO `boiler`
   ('B-03', '3号余热锅炉', 'F-04', 3.82, 392.5, 51.60, 126.0, 198.0, 60.00, 'RUNNING',  '配套流化床'),
   ('B-04', '4号余热锅炉', 'F-06', 3.70, 385.0, 26.80, 124.0, 205.0, 32.00, 'BANKING',  '回转窑停炉，热备中');
 
--- 汽轮发电机组：3 台（发电量均低于 装机 × 运行小时 的理论上限）
+-- 汽轮发电机组：3 台。机组表只保存「当前表码/基数」，日结口径按相邻表码增量计算（见 generation_daily）
 INSERT INTO `turbine_generator`
-  (`unit_no`, `unit_name`, `capacity_mw`, `generation_kwh`, `grid_kwh`, `auxiliary_rate`, `running_hours`,
+  (`unit_no`, `unit_name`, `capacity_mw`, `meter_reading_kwh`, `grid_meter_reading_kwh`,
+   `meter_source`, `meter_status`, `generation_kwh`, `grid_kwh`, `auxiliary_rate`, `running_hours`,
    `stat_date`, `status`, `remark`) VALUES
-  ('TG-01', '1号汽轮发电机组', 25.00, 15860000.00, 13240000.00, 16.52, 720.0, DATE(UTC_TIMESTAMP() + INTERVAL 8 HOUR), 'ON_GRID', '凝汽式机组，月度累计'),
-  ('TG-02', '2号汽轮发电机组', 25.00, 14520000.00, 12180000.00, 16.11, 716.0, DATE(UTC_TIMESTAMP() + INTERVAL 8 HOUR), 'ON_GRID', '抽凝式机组，月度累计'),
-  ('TG-03', '3号汽轮发电机组', 12.00,  6980000.00,  5820000.00, 16.62, 690.0, DATE(UTC_TIMESTAMP() + INTERVAL 8 HOUR), 'ON_GRID', '小机组，调峰运行');
+  ('TG-01', '1号汽轮发电机组', 25.00, 15860000.00, 13240000.00, 'PREV_DAY', 'NORMAL', 508000.00, 424000.00, 16.54, 24.0, DATE_SUB(DATE(UTC_TIMESTAMP() + INTERVAL 8 HOUR), INTERVAL 1 DAY), 'ON_GRID', '凝汽式机组，表码日结'),
+  ('TG-02', '2号汽轮发电机组', 25.00, 14520000.00, 12180000.00, 'PREV_DAY', 'NORMAL', 465000.00, 390000.00, 16.13, 24.0, DATE_SUB(DATE(UTC_TIMESTAMP() + INTERVAL 8 HOUR), INTERVAL 1 DAY), 'ON_GRID', '抽凝式机组，表码日结'),
+  ('TG-03', '3号汽轮发电机组', 12.00,  6980000.00,  5820000.00, 'PREV_DAY', 'NORMAL', 224000.00, 187000.00, 16.52, 24.0, DATE_SUB(DATE(UTC_TIMESTAMP() + INTERVAL 8 HOUR), INTERVAL 1 DAY), 'ON_GRID', '小机组，调峰运行');
+
+-- 日结：演示最近两日，均为相邻表码增量（当日发电增量 = 期末表码 − 期初基数，绝非累计读数）
+INSERT INTO `generation_daily`
+  (`unit_no`, `stat_date`, `base_reading_kwh`, `closing_reading_kwh`, `generation_kwh`,
+   `grid_base_reading_kwh`, `grid_closing_reading_kwh`, `grid_kwh`, `auxiliary_rate`, `running_hours`,
+   `base_type`, `abnormal_status`, `operator`, `remark`, `create_time`) VALUES
+  ('TG-01', DATE_SUB(DATE(UTC_TIMESTAMP() + INTERVAL 8 HOUR), INTERVAL 2 DAY), 14844000.00, 15352000.00, 508000.00, 12392000.00, 12816000.00, 424000.00, 16.54, 24.0,
+   'PREV_DAY', 'NORMAL', '日结员甲', '相邻表码增量：期末 15,352,000 − 期初 14,844,000', DATE_SUB(UTC_TIMESTAMP() + INTERVAL 8 HOUR, INTERVAL 2 DAY)),
+  ('TG-01', DATE_SUB(DATE(UTC_TIMESTAMP() + INTERVAL 8 HOUR), INTERVAL 1 DAY), 15352000.00, 15860000.00, 508000.00, 12816000.00, 13240000.00, 424000.00, 16.54, 24.0,
+   'PREV_DAY', 'NORMAL', '日结员甲', '相邻表码增量：期末 15,860,000 − 期初 15,352,000', DATE_SUB(UTC_TIMESTAMP() + INTERVAL 8 HOUR, INTERVAL 1 DAY)),
+  ('TG-02', DATE_SUB(DATE(UTC_TIMESTAMP() + INTERVAL 8 HOUR), INTERVAL 2 DAY), 13590000.00, 14055000.00, 465000.00, 11400000.00, 11790000.00, 390000.00, 16.13, 24.0,
+   'PREV_DAY', 'NORMAL', '日结员乙', '相邻表码增量：期末 14,055,000 − 期初 13,590,000', DATE_SUB(UTC_TIMESTAMP() + INTERVAL 8 HOUR, INTERVAL 2 DAY)),
+  ('TG-02', DATE_SUB(DATE(UTC_TIMESTAMP() + INTERVAL 8 HOUR), INTERVAL 1 DAY), 14055000.00, 14520000.00, 465000.00, 11790000.00, 12180000.00, 390000.00, 16.13, 24.0,
+   'PREV_DAY', 'NORMAL', '日结员乙', '相邻表码增量：期末 14,520,000 − 期初 14,055,000', DATE_SUB(UTC_TIMESTAMP() + INTERVAL 8 HOUR, INTERVAL 1 DAY)),
+  ('TG-03', DATE_SUB(DATE(UTC_TIMESTAMP() + INTERVAL 8 HOUR), INTERVAL 2 DAY), 6532000.00, 6756000.00, 224000.00, 5446000.00, 5633000.00, 187000.00, 16.52, 24.0,
+   'PREV_DAY', 'NORMAL', '日结员甲', '相邻表码增量：期末 6,756,000 − 期初 6,532,000', DATE_SUB(UTC_TIMESTAMP() + INTERVAL 8 HOUR, INTERVAL 2 DAY)),
+  ('TG-03', DATE_SUB(DATE(UTC_TIMESTAMP() + INTERVAL 8 HOUR), INTERVAL 1 DAY), 6756000.00, 6980000.00, 224000.00, 5633000.00, 5820000.00, 187000.00, 16.52, 24.0,
+   'PREV_DAY', 'NORMAL', '日结员甲', '相邻表码增量：期末 6,980,000 − 期初 6,756,000', DATE_SUB(UTC_TIMESTAMP() + INTERVAL 8 HOUR, INTERVAL 1 DAY));
 
 -- 烟气排放指标：6 项 × 3 个时段，其中 5 项在最近时段超标
 INSERT INTO `emission_record`

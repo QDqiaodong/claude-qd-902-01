@@ -119,30 +119,92 @@
 
     <!-- ===== 汽轮发电机组 ===== -->
     <section id="sec-turbine" class="wp-section">
-      <h3 class="wp-section-title">汽轮发电机组</h3>
+      <h3 class="wp-section-title">汽轮发电机组 · 日结按相邻表码增量（表码≠单日发电量）</h3>
       <div class="turbine-grid">
-        <div v-for="t in turbines" :key="t.unitNo" class="wp-panel unit-card">
+        <div v-for="t in turbines" :key="t.unitNo" class="wp-panel unit-card" :class="{ held: t.meterStatus === 'METER_HELD' }">
           <div class="wp-panel-title">
             <span>{{ t.unitNo }} {{ t.unitName }}</span>
             <span class="sub wp-tag ok">{{ t.statusName }}</span>
           </div>
           <div class="wp-panel-body">
+            <div class="meter-badges">
+              <span class="wp-tag" :class="t.meterStatus === 'METER_HELD' ? 'danger' : 'ok'">
+                {{ t.meterStatusName }}
+              </span>
+              <span class="wp-tag primary">基数来源：{{ t.meterSourceName }}</span>
+              <span v-if="t.abnormalStatus && t.abnormalStatus !== 'NORMAL'" class="wp-tag warn">
+                ⚠ {{ t.abnormalStatusName }}
+              </span>
+            </div>
             <div class="kv-grid">
-              <div class="kv"><span>装机容量</span><b class="num">{{ num(t.capacityMw, 2) }} MW</b></div>
-              <div class="kv"><span>发电量</span><b class="num">{{ num(t.generationKwh, 0) }} kWh</b></div>
-              <div class="kv"><span>上网电量</span><b class="num">{{ num(t.gridKwh, 0) }} kWh</b></div>
+              <div class="kv"><span>当前表码（累计）</span><b class="num">{{ num(t.meterReadingKwh, 0) }} kWh</b></div>
+              <div class="kv"><span>上网表当前表码</span><b class="num">{{ num(t.gridMeterReadingKwh, 0) }} kWh</b></div>
+              <div class="kv"><span>当日发电增量</span><b class="num hl">{{ num(t.generationKwh, 0) }} kWh</b></div>
+              <div class="kv"><span>当日上网电量</span><b class="num hl">{{ num(t.gridKwh, 0) }} kWh</b></div>
               <div class="kv"><span>厂用电率</span><b class="num">{{ num(t.auxiliaryRate, 2) }} %</b></div>
-              <div class="kv"><span>运行小时</span><b class="num">{{ num(t.runningHours, 0) }} h</b></div>
-              <div class="kv"><span>容量因子</span><b class="num">{{ pct(t.capacityFactor) }}</b></div>
+              <div class="kv"><span>日结运行小时</span><b class="num">{{ num(t.runningHours, 1) }} h</b></div>
+              <div class="kv"><span>最近日结日</span><b class="mono">{{ t.statDate || '--' }}</b></div>
+              <div class="kv"><span>装机容量</span><b class="num">{{ num(t.capacityMw, 2) }} MW</b></div>
             </div>
             <div class="limit-row">
-              <span>理论上限（装机 × 运行小时）</span>
-              <b class="num">{{ num(t.theoreticalMaxKwh, 0) }} kWh</b>
+              <span>当日理论上限（装机 × 运行小时）</span>
+              <b class="num">{{ num(t.theoreticalMaxKwh, 0) }} kWh · 负荷 {{ pct(t.capacityFactor) }}</b>
+            </div>
+            <div v-if="t.meterStatus === 'METER_HELD'" class="freeze-tip">
+              ⛔ 该机组已暂停日结等待校表：校表确认新基数前不能日结，也不会把累计读数误算成发电量。
             </div>
             <div class="unit-actions">
-              <el-button size="small" type="primary" @click="openGeneration(t)">登记发电量</el-button>
+              <el-button size="small" type="primary" :disabled="t.meterStatus === 'METER_HELD'" @click="openSettle(t)">日结登记</el-button>
+              <el-button size="small" type="warning" plain @click="openMeterEvent(t)">表计异常处置</el-button>
+              <el-button v-if="t.meterStatus === 'METER_HELD'" size="small" type="success" @click="openRelease(t)">校表恢复</el-button>
             </div>
           </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 发电日结台账 ===== -->
+    <section id="sec-daily" class="wp-section">
+      <h3 class="wp-section-title">发电日结台账（每日计算依据：基数 / 期末表码 / 增量 / 基数来源 / 异常状态）</h3>
+      <div class="wp-panel">
+        <div class="wp-panel-body">
+          <table class="wp-table daily-table">
+            <thead>
+              <tr>
+                <th>机组</th>
+                <th>统计日</th>
+                <th class="right">期初基数 kWh</th>
+                <th class="right">期末表码 kWh</th>
+                <th class="right">当日发电增量 kWh</th>
+                <th class="right">当日上网电量 kWh</th>
+                <th class="right">厂用电率 %</th>
+                <th class="right">运行 h</th>
+                <th>基数来源</th>
+                <th>异常状态</th>
+                <th>计算依据 / 留痕</th>
+                <th>操作人</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="d in dailies" :key="d.id" :class="{ abnormal: d.abnormalStatus !== 'NORMAL' }">
+                <td class="mono strong">{{ d.unitNo }}</td>
+                <td class="mono">{{ d.statDate }}</td>
+                <td class="right num">{{ num(d.baseReadingKwh, 0) }}</td>
+                <td class="right num">{{ num(d.closingReadingKwh, 0) }}</td>
+                <td class="right num hl">{{ num(d.generationKwh, 0) }}</td>
+                <td class="right num">{{ num(d.gridKwh, 0) }}</td>
+                <td class="right num">{{ num(d.auxiliaryRate, 2) }}</td>
+                <td class="right num">{{ num(d.runningHours, 1) }}</td>
+                <td>{{ d.baseTypeName }}</td>
+                <td>
+                  <span class="wp-tag" :class="d.abnormalStatus === 'NORMAL' ? 'ok' : 'warn'">{{ d.abnormalStatusName }}</span>
+                </td>
+                <td class="dim basis">{{ d.remark || '--' }}</td>
+                <td>{{ d.operator || '--' }}</td>
+              </tr>
+              <tr v-if="!dailies.length"><td colspan="12" class="empty">暂无日结记录</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </section>
@@ -237,20 +299,113 @@
       </template>
     </el-dialog>
 
-    <!-- ===== 发电量登记弹窗 ===== -->
-    <el-dialog v-model="genDialog" :title="'登记发电量 · ' + genForm.unitNo" width="520px">
-      <el-form :model="genForm" label-width="120px">
-        <el-form-item label="发电量 kWh"><el-input-number v-model="genForm.generationKwh" :min="0" :step="10000" /></el-form-item>
-        <el-form-item label="上网电量 kWh"><el-input-number v-model="genForm.gridKwh" :min="0" :step="10000" /></el-form-item>
-        <el-form-item label="运行小时 h"><el-input-number v-model="genForm.runningHours" :min="0" :precision="1" :step="1" /></el-form-item>
+    <!-- ===== 发电日结弹窗（填报期末累计表码，不是发电量） ===== -->
+    <el-dialog v-model="settleDialog" :title="'发电日结 · ' + settleForm.unitNo" width="560px">
+      <el-form :model="settleForm" label-width="130px">
+        <el-form-item label="统计日">
+          <el-date-picker v-model="settleForm.statDate" type="date" value-format="YYYY-MM-DD" :disabled-date="disableFuture" />
+        </el-form-item>
+        <el-form-item label="发电表期末表码">
+          <el-input-number v-model="settleForm.meterReadingKwh" :min="0" :step="100000" />
+          <span class="form-hint">kWh，累计读数；当日增量＝期末表码−上日封账基数</span>
+        </el-form-item>
+        <el-form-item label="上网表期末表码">
+          <el-input-number v-model="settleForm.gridMeterReadingKwh" :min="0" :step="100000" />
+          <span class="form-hint">kWh，留空则按 85% 估算上网电量</span>
+        </el-form-item>
+        <el-form-item label="运行小时 h">
+          <el-input-number v-model="settleForm.runningHours" :min="0" :max="24" :precision="1" :step="1" />
+        </el-form-item>
+        <el-form-item label="操作人">
+          <el-input v-model="settleForm.operator" placeholder="日结员" />
+        </el-form-item>
         <div class="limit-tip">
-          理论上限 = 装机 {{ genForm.capacityMw }} MW × 1000 × 运行 {{ genForm.runningHours }} h =
-          <b class="num">{{ genForm.capacityMw * 1000 * genForm.runningHours }}</b> kWh，超出将被拒绝
+          上日封账基数 <b class="num">{{ num(settleForm.baseReadingKwh, 0) }}</b> kWh，
+          预计当日增量 <b class="num">{{ num(settlePreview.generation, 0) }}</b> kWh；
+          理论上限 <b class="num">{{ settlePreview.max }}</b> kWh（装机 {{ settleForm.capacityMw }} MW × 运行 {{ settleForm.runningHours || 0 }} h），
+          表码回拨/更换请走「表计异常处置」。
         </div>
       </el-form>
       <template #footer>
-        <el-button @click="genDialog = false">取消</el-button>
-        <el-button type="primary" @click="submitGeneration">登记</el-button>
+        <el-button @click="settleDialog = false">取消</el-button>
+        <el-button type="primary" :loading="submitting" @click="submitSettle">日结</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- ===== 表计回拨/更换处置弹窗 ===== -->
+    <el-dialog v-model="meterDialog" :title="'表计异常处置 · ' + meterForm.unitNo" width="600px">
+      <el-form :model="meterForm" label-width="140px">
+        <el-form-item label="统计日">
+          <el-date-picker v-model="meterForm.statDate" type="date" value-format="YYYY-MM-DD" :disabled-date="disableFuture" />
+        </el-form-item>
+        <el-form-item label="异常类型">
+          <el-radio-group v-model="meterForm.eventType">
+            <el-radio label="ROLLBACK">表计回拨（读数变小）</el-radio>
+            <el-radio label="REPLACE">表计更换</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="本次表码">
+          <el-input-number v-model="meterForm.observedReadingKwh" :min="0" :step="100" />
+          <span class="form-hint">回拨后读数 / 新表读数 kWh</span>
+        </el-form-item>
+        <el-form-item label="旧表封账止码">
+          <el-input-number v-model="meterForm.oldMeterFinalReadingKwh" :min="0" :step="100000" />
+          <span class="form-hint">留空取上日封账基数 {{ num(meterForm.previousBase, 0) }}</span>
+        </el-form-item>
+        <el-form-item v-if="meterForm.eventType === 'REPLACE'" label="新表起码">
+          <el-input-number v-model="meterForm.newMeterStartReadingKwh" :min="0" :step="100" />
+          <span class="form-hint">新表起始读数，通常为 0</span>
+        </el-form-item>
+        <el-form-item label="上网表本次表码">
+          <el-input-number v-model="meterForm.gridMeterReadingKwh" :min="0" :step="100000" />
+          <span class="form-hint">留空按 85% 估算上网增量</span>
+        </el-form-item>
+        <el-form-item label="运行小时 h">
+          <el-input-number v-model="meterForm.runningHours" :min="0" :max="24" :precision="1" :step="1" />
+        </el-form-item>
+        <el-form-item label="处置选择">
+          <el-radio-group v-model="meterForm.resolution">
+            <el-radio label="SETTLED_NEW_BASE">旧表封账并启用新基数（当日＝旧表尾段＋新表首段）</el-radio>
+            <el-radio label="HELD_PENDING_CALIBRATION">暂停日结等待校表</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="操作人">
+          <el-input v-model="meterForm.operator" />
+        </el-form-item>
+        <el-form-item label="说明">
+          <el-input v-model="meterForm.note" type="textarea" :rows="2" placeholder="封账/挂起理由，留痕可审计" />
+        </el-form-item>
+        <div class="limit-tip">
+          选择会改变后续增量口径：封账后次日起按新表读数做差；挂起期间任何日结都会被拒绝，校表确认新基数后恢复。
+        </div>
+      </el-form>
+      <template #footer>
+        <el-button @click="meterDialog = false">取消</el-button>
+        <el-button type="primary" :loading="submitting" @click="submitMeterEvent">提交并留痕</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- ===== 校表恢复弹窗 ===== -->
+    <el-dialog v-model="releaseDialog" :title="'校表恢复 · ' + releaseForm.unitNo" width="480px">
+      <el-form :model="releaseForm" label-width="140px">
+        <el-form-item label="确认新基数">
+          <el-input-number v-model="releaseForm.releaseReadingKwh" :min="0" :step="100" />
+          <span class="form-hint">校表后发电表累计读数 kWh</span>
+        </el-form-item>
+        <el-form-item label="上网表新基数">
+          <el-input-number v-model="releaseForm.gridReleaseReadingKwh" :min="0" :step="100" />
+          <span class="form-hint">可选</span>
+        </el-form-item>
+        <el-form-item label="操作人">
+          <el-input v-model="releaseForm.operator" />
+        </el-form-item>
+        <el-form-item label="校表说明">
+          <el-input v-model="releaseForm.note" type="textarea" :rows="2" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="releaseDialog = false">取消</el-button>
+        <el-button type="success" :loading="submitting" @click="submitRelease">确认恢复日结</el-button>
       </template>
     </el-dialog>
   </div>
@@ -267,14 +422,70 @@ const monthly = ref([])
 const logs = ref([])
 const boilers = ref([])
 const turbines = ref([])
+const dailies = ref([])
 const powerDict = ref({})
 const frozenFurnaces = ref([])
 const frozenSet = computed(() => new Set(frozenFurnaces.value || []))
 
 const boilerDialog = ref(false)
-const genDialog = ref(false)
+const settleDialog = ref(false)
+const meterDialog = ref(false)
+const releaseDialog = ref(false)
+const submitting = ref(false)
 const boilerForm = reactive({ boilerNo: '', steamPressureMpa: 4, steamTempC: 400, evaporationTph: 70, status: 'RUNNING' })
-const genForm = reactive({ unitNo: '', capacityMw: 25, generationKwh: 15000000, gridKwh: 12500000, runningHours: 720 })
+const settleForm = reactive({
+  unitNo: '', capacityMw: 25, statDate: todayStr(), baseReadingKwh: 0,
+  meterReadingKwh: 0, gridMeterReadingKwh: null, runningHours: 24, operator: ''
+})
+const meterForm = reactive({
+  unitNo: '', statDate: todayStr(), eventType: 'ROLLBACK', previousBase: 0,
+  observedReadingKwh: 0, oldMeterFinalReadingKwh: null, newMeterStartReadingKwh: 0,
+  gridMeterReadingKwh: null, runningHours: 24,
+  resolution: 'SETTLED_NEW_BASE', operator: '', note: ''
+})
+const releaseForm = reactive({
+  eventId: null, unitNo: '', releaseReadingKwh: 0, gridReleaseReadingKwh: null, operator: '', note: ''
+})
+
+const settlePreview = computed(() => {
+  const closing = Number(settleForm.meterReadingKwh) || 0
+  const base = Number(settleForm.baseReadingKwh) || 0
+  const generation = Math.max(closing - base, 0)
+  const max = (Number(settleForm.capacityMw) || 0) * 1000 * (Number(settleForm.runningHours) || 0)
+  return { generation, max }
+})
+
+function todayStr() {
+  const d = new Date()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${d.getFullYear()}-${m}-${day}`
+}
+
+function disableFuture(date) {
+  return date.getTime() > Date.now()
+}
+
+/**
+ * 页面请求凭据：同一次填报即使网络重试 / 重新打开页面再点，也只返回同一份日结。
+ * 按 机组+日期 持久化到 localStorage，关闭重开浏览器仍保持幂等；
+ * 已成功的日结重发会原样返回（不会产生第二份），次日日期变化自然换新凭据。
+ */
+function requestKey(prefix, unitNo, statDate) {
+  return `power:${prefix}:${unitNo}:${statDate}`
+}
+
+function obtainRequestId(prefix, unitNo, statDate) {
+  const key = requestKey(prefix, unitNo, statDate)
+  let id = localStorage.getItem(key)
+  if (!id) {
+    id = (window.crypto && window.crypto.randomUUID)
+      ? window.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+    localStorage.setItem(key, id)
+  }
+  return id
+}
 
 const maxMonthly = computed(() => Math.max(...monthly.value.map((m) => Number(m.processTon) || 0), 1))
 
@@ -324,7 +535,7 @@ function actionTag(action) {
 
 async function load() {
   try {
-    const [r1, r2, r3, r4, r5, r6, r7, r8] = await Promise.all([
+    const [r1, r2, r3, r4, r5, r6, r7, r8, r9] = await Promise.all([
       furnaceApi.list(),
       furnaceApi.statsByType(),
       furnaceApi.monthly(),
@@ -332,7 +543,8 @@ async function load() {
       powerApi.boilers(),
       powerApi.turbines(),
       powerApi.dict(),
-      disposalApi.frozenFurnaces()
+      disposalApi.frozenFurnaces(),
+      powerApi.daily()
     ])
     furnaces.value = r1.data || []
     typeStats.value = r2.data || []
@@ -342,6 +554,7 @@ async function load() {
     turbines.value = r6.data || []
     powerDict.value = r7.data || {}
     frozenFurnaces.value = r8.data || []
+    dailies.value = r9.data || []
   } catch (e) {
     ElMessage.error(e.message)
   }
@@ -394,29 +607,128 @@ async function submitBoiler() {
   }
 }
 
-function openGeneration(t) {
-  Object.assign(genForm, {
+function openSettle(t) {
+  Object.assign(settleForm, {
     unitNo: t.unitNo,
     capacityMw: Number(t.capacityMw),
-    generationKwh: Number(t.generationKwh),
-    gridKwh: Number(t.gridKwh),
-    runningHours: Number(t.runningHours)
+    statDate: todayStr(),
+    baseReadingKwh: Number(t.meterReadingKwh || 0),
+    meterReadingKwh: Number(t.meterReadingKwh || 0),
+    gridMeterReadingKwh: t.gridMeterReadingKwh == null ? null : Number(t.gridMeterReadingKwh),
+    runningHours: t.runningHours ? Number(t.runningHours) : 24,
+    operator: ''
   })
-  genDialog.value = true
+  settleDialog.value = true
 }
 
-async function submitGeneration() {
+async function submitSettle() {
+  const statDate = settleForm.statDate || todayStr()
+  const payload = {
+    statDate,
+    meterReadingKwh: settleForm.meterReadingKwh,
+    gridMeterReadingKwh: settleForm.gridMeterReadingKwh,
+    runningHours: settleForm.runningHours,
+    operator: settleForm.operator || '中控值班',
+    requestId: obtainRequestId('settle', settleForm.unitNo, statDate)
+  }
+  submitting.value = true
   try {
-    const res = await powerApi.register(genForm.unitNo, {
-      generationKwh: genForm.generationKwh,
-      gridKwh: genForm.gridKwh,
-      runningHours: genForm.runningHours
-    })
-    ElMessage.success(res.message || '已登记')
-    genDialog.value = false
+    const res = await powerApi.settle(settleForm.unitNo, payload)
+    ElMessage.success(`${res.message || '日结完成'}：当日增量 ${num(res.data.generationKwh, 0)} kWh，厂用电率 ${num(res.data.auxiliaryRate, 2)}%`)
+    settleDialog.value = false
     await load()
   } catch (e) {
     ElMessage.error(e.message)
+  } finally {
+    submitting.value = false
+  }
+}
+
+function openMeterEvent(t) {
+  Object.assign(meterForm, {
+    unitNo: t.unitNo,
+    statDate: todayStr(),
+    eventType: 'ROLLBACK',
+    previousBase: Number(t.meterReadingKwh || 0),
+    observedReadingKwh: 0,
+    oldMeterFinalReadingKwh: null,
+    newMeterStartReadingKwh: 0,
+    gridMeterReadingKwh: null,
+    runningHours: t.runningHours ? Number(t.runningHours) : 24,
+    resolution: 'SETTLED_NEW_BASE',
+    operator: '',
+    note: ''
+  })
+  meterDialog.value = true
+}
+
+async function submitMeterEvent() {
+  const statDate = meterForm.statDate || todayStr()
+  const payload = {
+    statDate,
+    eventType: meterForm.eventType,
+    observedReadingKwh: meterForm.observedReadingKwh,
+    oldMeterFinalReadingKwh: meterForm.oldMeterFinalReadingKwh,
+    newMeterStartReadingKwh: meterForm.eventType === 'REPLACE' ? meterForm.newMeterStartReadingKwh : undefined,
+    gridMeterReadingKwh: meterForm.gridMeterReadingKwh,
+    runningHours: meterForm.runningHours,
+    resolution: meterForm.resolution,
+    operator: meterForm.operator || '中控值班',
+    note: meterForm.note,
+    requestId: obtainRequestId('meter', meterForm.unitNo, statDate)
+  }
+  submitting.value = true
+  try {
+    const res = await powerApi.meterEvent(meterForm.unitNo, payload)
+    ElMessage.success(res.message || '已留痕')
+    meterDialog.value = false
+    await load()
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    submitting.value = false
+  }
+}
+
+function openRelease(t) {
+  Object.assign(releaseForm, {
+    eventId: null,
+    unitNo: t.unitNo,
+    releaseReadingKwh: Number(t.meterReadingKwh || 0),
+    gridReleaseReadingKwh: null,
+    operator: '',
+    note: ''
+  })
+  releaseDialog.value = true
+}
+
+async function submitRelease() {
+  // 查该机组挂起事件
+  let eventId = releaseForm.eventId
+  if (!eventId) {
+    const events = await powerApi.meterEvents(releaseForm.unitNo)
+    const open = (events.data || []).find((e) => e.eventStatus === 'OPEN')
+    if (!open) {
+      ElMessage.error('未找到待校表事件，无法恢复')
+      return
+    }
+    eventId = open.id
+  }
+  submitting.value = true
+  try {
+    const res = await powerApi.releaseMeter(eventId, {
+      releaseReadingKwh: releaseForm.releaseReadingKwh,
+      gridReleaseReadingKwh: releaseForm.gridReleaseReadingKwh,
+      operator: releaseForm.operator || '校表员',
+      note: releaseForm.note
+    })
+    ElMessage.success(res.message || '已恢复日结')
+    releaseDialog.value = false
+    await load()
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    submitting.value = false
   }
 }
 
@@ -751,5 +1063,43 @@ onMounted(load)
 
 .limit-tip b {
   color: var(--wp-warn);
+}
+
+.meter-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.unit-card.held {
+  border: 1px solid rgba(239, 83, 80, 0.45);
+}
+
+.kv b.hl {
+  color: #ffd54f;
+}
+
+.form-hint {
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--wp-text-mute);
+}
+
+.daily-table td.abnormal,
+.daily-table tr.abnormal td {
+  background: rgba(255, 183, 77, 0.05);
+}
+
+.daily-table .basis {
+  max-width: 320px;
+  white-space: normal;
+  font-size: 11px;
+}
+
+.wp-tag.warn {
+  color: #ffb74d;
+  border-color: rgba(255, 183, 77, 0.4);
+  background: rgba(255, 183, 77, 0.08);
 }
 </style>

@@ -57,9 +57,13 @@ export const furnaceApi = {
 export const powerApi = {
   boilers: () => get('/power/boilers'),
   turbines: () => get('/power/turbines'),
+  daily: (unitNo) => get('/power/daily', { unitNo }),
+  meterEvents: (unitNo) => get('/power/meter-events', { unitNo }),
   dict: () => get('/power/dict'),
   adjustBoiler: (boilerNo, data) => post(`/power/boilers/${boilerNo}/adjust`, data),
-  register: (unitNo, data) => post(`/power/turbines/${unitNo}/generation`, data)
+  settle: (unitNo, data) => post(`/power/turbines/${unitNo}/daily-settle`, data),
+  meterEvent: (unitNo, data) => post(`/power/turbines/${unitNo}/meter-event`, data),
+  releaseMeter: (eventId, data) => post(`/power/meter-events/${eventId}/release`, data)
 }
 
 export const envApi = {

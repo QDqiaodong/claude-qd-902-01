@@ -114,6 +114,51 @@ public final class Dict {
             "IDLE", "热备停机",
             "OVERHAUL", "检修");
 
+    // ---------------- 发电日结 / 表计 ----------------
+    /** 基数来源：种子初始 / 上日封账表码 / 回拨换表后重置 */
+    public static final List<String> METER_SOURCES = List.of("SEED", "PREV_DAY", "RESET_NEW_BASE");
+
+    private static final Map<String, String> METER_SOURCE_NAME = Map.of(
+            "SEED", "初始基数（投运/种子）",
+            "PREV_DAY", "上日封账表码",
+            "RESET_NEW_BASE", "异常重置新基数");
+
+    /** 机组表计状态 */
+    public static final List<String> METER_STATUSES = List.of("NORMAL", "METER_HELD");
+
+    private static final Map<String, String> METER_STATUS_NAME = Map.of(
+            "NORMAL", "正常",
+            "METER_HELD", "暂停日结待校表");
+
+    /** 表计异常类型 */
+    public static final List<String> METER_EVENT_TYPES = List.of("ROLLBACK", "REPLACE");
+
+    private static final Map<String, String> METER_EVENT_TYPE_NAME = Map.of(
+            "ROLLBACK", "表计回拨",
+            "REPLACE", "表计更换");
+
+    /** 异常处置选择 */
+    public static final List<String> METER_RESOLUTIONS =
+            List.of("SETTLED_NEW_BASE", "HELD_PENDING_CALIBRATION");
+
+    private static final Map<String, String> METER_RESOLUTION_NAME = Map.of(
+            "SETTLED_NEW_BASE", "旧表封账并启用新基数",
+            "HELD_PENDING_CALIBRATION", "暂停日结等待校表");
+
+    /** 表计事件状态 */
+    private static final Map<String, String> METER_EVENT_STATUS_NAME = Map.of(
+            "OPEN", "待校表",
+            "RESOLVED", "已校表恢复");
+
+    /** 日结异常状态 */
+    private static final Map<String, String> ABNORMAL_STATUS_NAME = Map.of(
+            "NORMAL", "正常",
+            "ROLLBACK_RESET", "回拨已封账新基数",
+            "REPLACE_RESET", "换表已封账新基数");
+
+    /** 估算上网电量时的默认上网比例（未提供上网表码时使用） */
+    public static final BigDecimal DEFAULT_GRID_FACTOR = bd(0.85);
+
     // ---------------- 排放指标与限值（GB 18485-2014 日均值口径） ----------------
     public static final List<String> EMISSION_INDICATORS = List.of(
             "PARTICULATE", "SO2", "NOX", "HCL", "CO", "DIOXIN");
@@ -297,6 +342,30 @@ public final class Dict {
 
     public static String unitStatusName(String status) {
         return status == null ? "" : UNIT_STATUS_NAME.getOrDefault(status, status);
+    }
+
+    public static String meterSourceName(String code) {
+        return code == null ? "" : METER_SOURCE_NAME.getOrDefault(code, code);
+    }
+
+    public static String meterStatusName(String code) {
+        return code == null ? "" : METER_STATUS_NAME.getOrDefault(code, code);
+    }
+
+    public static String meterEventTypeName(String code) {
+        return code == null ? "" : METER_EVENT_TYPE_NAME.getOrDefault(code, code);
+    }
+
+    public static String meterResolutionName(String code) {
+        return code == null ? "" : METER_RESOLUTION_NAME.getOrDefault(code, code);
+    }
+
+    public static String meterEventStatusName(String code) {
+        return code == null ? "" : METER_EVENT_STATUS_NAME.getOrDefault(code, code);
+    }
+
+    public static String abnormalStatusName(String code) {
+        return code == null ? "" : ABNORMAL_STATUS_NAME.getOrDefault(code, code);
     }
 
     public static boolean isValidIndicator(String indicator) {

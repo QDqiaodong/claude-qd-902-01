@@ -151,8 +151,8 @@ const nodes = [
   {
     key: 'turbine', label: '汽轮发电', icon: 'bolt', path: '/furnace',
     subs: [
-      { label: '机组参数', hash: '#sec-turbine' },
-      { label: '发电量登记', hash: '#sec-generation' }
+      { label: '机组与日结', hash: '#sec-turbine' },
+      { label: '发电日结台账', hash: '#sec-daily' }
     ]
   },
   {
