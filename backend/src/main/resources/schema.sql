@@ -131,16 +131,87 @@ CREATE TABLE `turbine_generator` (
   `unit_no`        VARCHAR(32)  NOT NULL COMMENT '机组编号',
   `unit_name`      VARCHAR(64)  DEFAULT NULL COMMENT '机组名称',
   `capacity_mw`    DECIMAL(8,2) DEFAULT NULL COMMENT '装机容量 MW',
-  `generation_kwh` DECIMAL(14,2) DEFAULT NULL COMMENT '发电量 kWh',
-  `grid_kwh`       DECIMAL(14,2) DEFAULT NULL COMMENT '上网电量 kWh',
-  `auxiliary_rate` DECIMAL(5,2) DEFAULT NULL COMMENT '厂用电率 %',
-  `running_hours`  DECIMAL(10,1) DEFAULT NULL COMMENT '运行小时 h',
-  `stat_date`      DATE         DEFAULT NULL COMMENT '统计日期',
+  `generation_kwh` DECIMAL(14,2) DEFAULT NULL COMMENT '最近统计日发电增量 kWh（日结口径，非累计表码）',
+  `grid_kwh`       DECIMAL(14,2) DEFAULT NULL COMMENT '最近统计日上网电量 kWh（日结口径）',
+  `auxiliary_rate` DECIMAL(5,2) DEFAULT NULL COMMENT '最近统计日厂用电率 %',
+  `running_hours`  DECIMAL(10,1) DEFAULT NULL COMMENT '最近统计日运行小时 h',
+  `main_meter_reading_kwh` DECIMAL(16,2) DEFAULT NULL COMMENT '主电能表当前累计表码（期末抄见）kWh',
+  `grid_meter_reading_kwh` DECIMAL(16,2) DEFAULT NULL COMMENT '上网关口表当前累计表码 kWh',
+  `meter_no`       VARCHAR(32) DEFAULT NULL COMMENT '当前主电能表表号',
+  `basis_source`   VARCHAR(32) DEFAULT NULL COMMENT '当前增量基数来源 PREV_DAY/INIT_BASE/NEW_METER_BASE/VERIFIED_BASE',
+  `stat_date`      DATE         DEFAULT NULL COMMENT '最近统计日期',
   `status`         VARCHAR(16)  DEFAULT NULL COMMENT '状态 ON_GRID/IDLE/OVERHAUL',
   `remark`         VARCHAR(128) DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_unit_no` (`unit_no`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='汽轮发电机组';
+
+-- ---------------- 6b. 汽轮发电机组发电日结（按机组 + 统计日 + 相邻表码计算当日增量） ----------------
+DROP TABLE IF EXISTS `power_daily_settlement`;
+CREATE TABLE `power_daily_settlement` (
+  `id`             BIGINT       NOT NULL AUTO_INCREMENT,
+  `unit_no`        VARCHAR(32)  NOT NULL COMMENT '机组编号',
+  `stat_date`      DATE         NOT NULL COMMENT '统计日',
+  `status`         VARCHAR(16)  NOT NULL COMMENT '日结状态 SETTLED 已日结 / SUSPENDED 暂停待校表 / VERIFIED 已校表待日结',
+  -- 主电能表表码与当日增量
+  `main_meter_no`            VARCHAR(32)  DEFAULT NULL COMMENT '当日主电能表表号',
+  `prev_reading_kwh`         DECIMAL(16,2) DEFAULT NULL COMMENT '期初（相邻）表码 kWh',
+  `current_reading_kwh`      DECIMAL(16,2) DEFAULT NULL COMMENT '期末（当日抄见）表码 kWh',
+  `basis_source`             VARCHAR(32)  NOT NULL COMMENT '增量基数来源 PREV_DAY 相邻日结 / INIT_BASE 首次建档 / NEW_METER_BASE 换表新基数 / VERIFIED_BASE 校表确认',
+  `generation_kwh`           DECIMAL(14,2) DEFAULT NULL COMMENT '当日发电增量 = 期末表码 − 期初基数 kWh',
+  -- 上网关口表表码与当日上网电量
+  `grid_meter_no`            VARCHAR(32)  DEFAULT NULL COMMENT '上网关口表表号',
+  `grid_prev_reading_kwh`    DECIMAL(16,2) DEFAULT NULL COMMENT '上网表期初表码 kWh',
+  `grid_current_reading_kwh` DECIMAL(16,2) DEFAULT NULL COMMENT '上网表期末表码 kWh',
+  `grid_kwh`                 DECIMAL(14,2) DEFAULT NULL COMMENT '当日上网电量 kWh',
+  `auxiliary_rate`           DECIMAL(5,2)  DEFAULT NULL COMMENT '厂用电率 % = (发电增量−上网电量)/发电增量',
+  `running_hours`            DECIMAL(10,1) DEFAULT NULL COMMENT '当日运行小时 h',
+  -- 表计回拨 / 更换的明确处置（二选一，全程留痕）
+  `meter_event`              VARCHAR(32)  DEFAULT NULL COMMENT '表计事件 NONE/ROLLBACK 回拨/METER_REPLACED 更换',
+  `anomaly_status`           VARCHAR(32)  NOT NULL DEFAULT 'NORMAL' COMMENT '异常状态 NORMAL/METER_ROLLBACK/METER_REPLACED/SUSPENDED',
+  `old_meter_sealed_reading_kwh` DECIMAL(16,2) DEFAULT NULL COMMENT '旧表封账表码 kWh',
+  `new_meter_no`             VARCHAR(32)  DEFAULT NULL COMMENT '新表表号',
+  `new_meter_base_reading_kwh` DECIMAL(16,2) DEFAULT NULL COMMENT '新表启用基数 kWh（后续增量口径锚点）',
+  `decision`                 VARCHAR(32)  DEFAULT NULL COMMENT '异常处置选择 SEAL_NEW_BASE 旧表封账启用新基数 / SUSPEND 暂停日结等待校表',
+  `decision_reason`          VARCHAR(255) DEFAULT NULL COMMENT '处置理由',
+  `decided_by`               VARCHAR(32)  DEFAULT NULL COMMENT '处置决策人',
+  `decided_time`             DATETIME     DEFAULT NULL COMMENT '处置时间',
+  -- 暂停日结后的校表登记
+  `verified_reading_kwh`     DECIMAL(16,2) DEFAULT NULL COMMENT '校表确认的有效基数 kWh',
+  `verified_by`              VARCHAR(32)  DEFAULT NULL COMMENT '校表人',
+  `verified_time`            DATETIME     DEFAULT NULL COMMENT '校表时间',
+  `verify_note`              VARCHAR(255) DEFAULT NULL COMMENT '校表说明',
+  -- 审计与并发控制
+  `operator`       VARCHAR(32)  DEFAULT NULL COMMENT '日结操作人',
+  `remark`         VARCHAR(255) DEFAULT NULL,
+  `request_fingerprint` VARCHAR(64) DEFAULT NULL COMMENT '请求幂等指纹（重复请求直接返回原日结）',
+  `version`        INT          NOT NULL DEFAULT 0 COMMENT '乐观锁：过期页面/重复校表提交拦截',
+  `settle_time`    DATETIME     DEFAULT NULL COMMENT '日结完成时间',
+  `create_time`    DATETIME     NOT NULL,
+  `update_time`    DATETIME     NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_unit_stat_date` (`unit_no`, `stat_date`),
+  KEY `idx_settlement_unit_date` (`unit_no`, `stat_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='汽轮发电机组发电日结';
+
+-- ---------------- 6c. 发电日结 / 表计处置操作轨迹（回拨、换表、校表、重复请求拒绝全部留痕） ----------------
+DROP TABLE IF EXISTS `power_meter_trace`;
+CREATE TABLE `power_meter_trace` (
+  `id`            BIGINT       NOT NULL AUTO_INCREMENT,
+  `unit_no`       VARCHAR(32)  NOT NULL COMMENT '机组编号',
+  `stat_date`     DATE         DEFAULT NULL COMMENT '统计日',
+  `settlement_id` BIGINT       DEFAULT NULL COMMENT '日结单 id',
+  `action`        VARCHAR(40)  NOT NULL COMMENT '动作 SETTLE/IDEMPOTENT_RETRY/REJECT_DUPLICATE/REJECT_STALE_DATE/SEAL_NEW_BASE/SUSPEND/VERIFY/FAIL',
+  `from_status`   VARCHAR(16)  DEFAULT NULL,
+  `to_status`     VARCHAR(16)  DEFAULT NULL,
+  `operator_name` VARCHAR(32)  DEFAULT NULL COMMENT '操作人',
+  `result`        VARCHAR(16)  NOT NULL DEFAULT 'SUCCESS' COMMENT '结果 SUCCESS/FAILED',
+  `detail`        VARCHAR(512) DEFAULT NULL COMMENT '计算依据或失败原因',
+  `operate_time`  DATETIME     NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_meter_trace_settlement` (`settlement_id`),
+  KEY `idx_meter_trace_unit` (`unit_no`, `operate_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='发电日结与表计处置操作轨迹';
 
 -- ---------------- 7. 烟气排放指标 ----------------
 DROP TABLE IF EXISTS `emission_record`;
@@ -372,13 +443,21 @@ INSERT INTO `boiler`
   ('B-03', '3号余热锅炉', 'F-04', 3.82, 392.5, 51.60, 126.0, 198.0, 60.00, 'RUNNING',  '配套流化床'),
   ('B-04', '4号余热锅炉', 'F-06', 3.70, 385.0, 26.80, 124.0, 205.0, 32.00, 'BANKING',  '回转窑停炉，热备中');
 
--- 汽轮发电机组：3 台（发电量均低于 装机 × 运行小时 的理论上限）
+-- 汽轮发电机组：3 台。generation/grid/auxiliary_rate 为最近统计日（当日增量口径）；
+-- main_meter_reading_kwh / grid_meter_reading_kwh 为当前累计表码，日结按相邻表码差值取增量，不再把累计表码当单日发电量
 INSERT INTO `turbine_generator`
   (`unit_no`, `unit_name`, `capacity_mw`, `generation_kwh`, `grid_kwh`, `auxiliary_rate`, `running_hours`,
-   `stat_date`, `status`, `remark`) VALUES
-  ('TG-01', '1号汽轮发电机组', 25.00, 15860000.00, 13240000.00, 16.52, 720.0, DATE(UTC_TIMESTAMP() + INTERVAL 8 HOUR), 'ON_GRID', '凝汽式机组，月度累计'),
-  ('TG-02', '2号汽轮发电机组', 25.00, 14520000.00, 12180000.00, 16.11, 716.0, DATE(UTC_TIMESTAMP() + INTERVAL 8 HOUR), 'ON_GRID', '抽凝式机组，月度累计'),
-  ('TG-03', '3号汽轮发电机组', 12.00,  6980000.00,  5820000.00, 16.62, 690.0, DATE(UTC_TIMESTAMP() + INTERVAL 8 HOUR), 'ON_GRID', '小机组，调峰运行');
+   `main_meter_reading_kwh`, `grid_meter_reading_kwh`, `meter_no`, `basis_source`, `stat_date`, `status`, `remark`) VALUES
+  ('TG-01', '1号汽轮发电机组', 25.00, 482000.00, 402470.00, 16.50, 24.0,
+    15860000.00, 13240000.00, 'EM-TG01-01', 'PREV_DAY', DATE(UTC_TIMESTAMP() + INTERVAL 8 HOUR), 'ON_GRID', '凝汽式机组，主电能表累计 1586 万 kWh'),
+  ('TG-02', '2号汽轮发电机组', 25.00, 441600.00, 370400.00, 16.12, 24.0,
+    14520000.00, 12180000.00, 'EM-TG02-01', 'PREV_DAY', DATE(UTC_TIMESTAMP() + INTERVAL 8 HOUR), 'ON_GRID', '抽凝式机组，主电能表累计 1452 万 kWh'),
+  ('TG-03', '3号汽轮发电机组', 12.00, 201600.00, 168100.00, 16.62, 24.0,
+    6980000.00, 5820000.00, 'EM-TG03-01', 'PREV_DAY', DATE(UTC_TIMESTAMP() + INTERVAL 8 HOUR), 'ON_GRID', '小机组，调峰运行'),
+  ('TG-04', '4号汽轮发电机组', 25.00, 468200.00, 391800.00, 16.32, 24.0,
+    17620000.00, 14690000.00, 'EM-TG04-01', 'PREV_DAY', DATE(UTC_TIMESTAMP() + INTERVAL 8 HOUR), 'ON_GRID', '凝汽式机组'),
+  ('TG-05', '5号汽轮发电机组', 12.00, 198400.00, 165300.00, 16.68, 24.0,
+    8240000.00, 6860000.00, 'EM-TG05-01', 'PREV_DAY', DATE(UTC_TIMESTAMP() + INTERVAL 8 HOUR), 'ON_GRID', '小机组，调峰运行');
 
 -- 烟气排放指标：6 项 × 3 个时段，其中 5 项在最近时段超标
 INSERT INTO `emission_record`

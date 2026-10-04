@@ -114,6 +114,53 @@ public final class Dict {
             "IDLE", "热备停机",
             "OVERHAUL", "检修");
 
+    // ---------------- 发电日结（相邻表码增量口径） ----------------
+    /** 日结状态：已日结 / 暂停待校表 / 已校表待日结 */
+    public static final List<String> SETTLEMENT_STATUS = List.of("SETTLED", "SUSPENDED", "VERIFIED");
+
+    private static final Map<String, String> SETTLEMENT_STATUS_NAME = Map.of(
+            "SETTLED", "已日结",
+            "SUSPENDED", "暂停待校表",
+            "VERIFIED", "已校表待日结");
+
+    /** 当日增量的基数来源 */
+    public static final List<String> BASIS_SOURCES = List.of(
+            "PREV_DAY", "INIT_BASE", "NEW_METER_BASE", "VERIFIED_BASE");
+
+    private static final Map<String, String> BASIS_SOURCE_NAME = Map.of(
+            "PREV_DAY", "上日日结表码",
+            "INIT_BASE", "首次建档基数",
+            "NEW_METER_BASE", "换表启用新基数",
+            "VERIFIED_BASE", "校表确认基数");
+
+    /** 表计事件 */
+    public static final List<String> METER_EVENTS = List.of("NONE", "ROLLBACK", "METER_REPLACED");
+
+    private static final Map<String, String> METER_EVENT_NAME = Map.of(
+            "NONE", "无异常",
+            "ROLLBACK", "表计回拨",
+            "METER_REPLACED", "更换表计");
+
+    /** 日结异常状态 */
+    public static final List<String> METER_ANOMALIES = List.of(
+            "NORMAL", "METER_ROLLBACK", "METER_REPLACED", "SUSPENDED");
+
+    private static final Map<String, String> METER_ANOMALY_NAME = Map.of(
+            "NORMAL", "正常",
+            "METER_ROLLBACK", "表计回拨",
+            "METER_REPLACED", "更换表计",
+            "SUSPENDED", "暂停日结");
+
+    /** 表计回拨/更换时的明确处置选择 */
+    public static final List<String> METER_DECISIONS = List.of("SEAL_NEW_BASE", "SUSPEND");
+
+    private static final Map<String, String> METER_DECISION_NAME = Map.of(
+            "SEAL_NEW_BASE", "旧表封账并启用新基数",
+            "SUSPEND", "暂停日结等待校表");
+
+    /** 上网电量缺省比例（未抄上网关口表时按发电量 85% 估算） */
+    public static final BigDecimal DEFAULT_GRID_RATE = bd(0.85);
+
     // ---------------- 排放指标与限值（GB 18485-2014 日均值口径） ----------------
     public static final List<String> EMISSION_INDICATORS = List.of(
             "PARTICULATE", "SO2", "NOX", "HCL", "CO", "DIOXIN");
@@ -297,6 +344,26 @@ public final class Dict {
 
     public static String unitStatusName(String status) {
         return status == null ? "" : UNIT_STATUS_NAME.getOrDefault(status, status);
+    }
+
+    public static String settlementStatusName(String status) {
+        return status == null ? "" : SETTLEMENT_STATUS_NAME.getOrDefault(status, status);
+    }
+
+    public static String basisSourceName(String code) {
+        return code == null ? "" : BASIS_SOURCE_NAME.getOrDefault(code, code);
+    }
+
+    public static String meterEventName(String code) {
+        return code == null ? "" : METER_EVENT_NAME.getOrDefault(code, code);
+    }
+
+    public static String meterAnomalyName(String code) {
+        return code == null ? "" : METER_ANOMALY_NAME.getOrDefault(code, code);
+    }
+
+    public static String meterDecisionName(String code) {
+        return code == null ? "" : METER_DECISION_NAME.getOrDefault(code, code);
     }
 
     public static boolean isValidIndicator(String indicator) {

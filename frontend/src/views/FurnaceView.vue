@@ -119,7 +119,7 @@
 
     <!-- ===== 汽轮发电机组 ===== -->
     <section id="sec-turbine" class="wp-section">
-      <h3 class="wp-section-title">汽轮发电机组</h3>
+      <h3 class="wp-section-title">汽轮发电机组（日结口径：相邻表码取当日增量）</h3>
       <div class="turbine-grid">
         <div v-for="t in turbines" :key="t.unitNo" class="wp-panel unit-card">
           <div class="wp-panel-title">
@@ -128,21 +128,86 @@
           </div>
           <div class="wp-panel-body">
             <div class="kv-grid">
-              <div class="kv"><span>装机容量</span><b class="num">{{ num(t.capacityMw, 2) }} MW</b></div>
-              <div class="kv"><span>发电量</span><b class="num">{{ num(t.generationKwh, 0) }} kWh</b></div>
-              <div class="kv"><span>上网电量</span><b class="num">{{ num(t.gridKwh, 0) }} kWh</b></div>
+              <div class="kv"><span>当前表码</span><b class="num">{{ num(t.mainMeterReadingKwh, 0) }}</b></div>
+              <div class="kv"><span>当日发电增量</span><b class="num">{{ num(t.generationKwh, 0) }} kWh</b></div>
+              <div class="kv"><span>当日上网电量</span><b class="num">{{ num(t.gridKwh, 0) }} kWh</b></div>
               <div class="kv"><span>厂用电率</span><b class="num">{{ num(t.auxiliaryRate, 2) }} %</b></div>
-              <div class="kv"><span>运行小时</span><b class="num">{{ num(t.runningHours, 0) }} h</b></div>
-              <div class="kv"><span>容量因子</span><b class="num">{{ pct(t.capacityFactor) }}</b></div>
+              <div class="kv"><span>当日运行</span><b class="num">{{ num(t.runningHours, 1) }} h</b></div>
+              <div class="kv"><span>装机容量</span><b class="num">{{ num(t.capacityMw, 2) }} MW</b></div>
+              <div class="kv"><span>主表表号</span><b class="mono">{{ t.meterNo || '--' }}</b></div>
+              <div class="kv"><span>基数来源</span><b>{{ t.basisSourceName || '--' }}</b></div>
+            </div>
+            <div class="meter-anomaly" v-if="t.anomalyStatus && t.anomalyStatus !== 'NORMAL'">
+              <span class="wp-tag danger">⛔ {{ t.anomalyStatusName }}</span>
+              <span class="dim">最近日结存在表计异常/暂停，见下方日结列表处置</span>
             </div>
             <div class="limit-row">
-              <span>理论上限（装机 × 运行小时）</span>
+              <span>理论上限（装机 × 当日运行小时）</span>
               <b class="num">{{ num(t.theoreticalMaxKwh, 0) }} kWh</b>
             </div>
             <div class="unit-actions">
-              <el-button size="small" type="primary" @click="openGeneration(t)">登记发电量</el-button>
+              <el-button size="small" type="primary" @click="openSettlement(t)">发电日结</el-button>
             </div>
           </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 发电日结列表 ===== -->
+    <section id="sec-settlement" class="wp-section">
+      <h3 class="wp-section-title">发电日结列表 · 当前表码 / 当日增量 / 基数来源 / 异常状态</h3>
+      <div class="wp-panel">
+        <div class="wp-panel-body">
+          <div class="settle-filter">
+            <el-select v-model="settleUnitFilter" placeholder="全部机组" clearable size="small" style="width: 180px" @change="loadSettlements">
+              <el-option v-for="t in turbines" :key="t.unitNo" :label="t.unitNo + ' ' + (t.unitName || '')" :value="t.unitNo" />
+            </el-select>
+            <el-button size="small" @click="loadSettlements">刷新</el-button>
+          </div>
+          <table class="wp-table">
+            <thead>
+              <tr>
+                <th>机组</th>
+                <th>统计日</th>
+                <th>状态</th>
+                <th>主表表号</th>
+                <th class="right">期初表码</th>
+                <th class="right">期末表码(当前)</th>
+                <th>基数来源</th>
+                <th class="right">当日增量 kWh</th>
+                <th class="right">上网电量 kWh</th>
+                <th class="right">厂用电率 %</th>
+                <th>异常状态</th>
+                <th>处置</th>
+                <th>依据/留痕</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="s in settlements" :key="s.id" :class="{ suspended: s.status === 'SUSPENDED' || s.status === 'VERIFIED' }">
+                <td class="mono strong">{{ s.unitNo }}<div class="dim">{{ s.unitName }}</div></td>
+                <td class="mono">{{ s.statDate }}</td>
+                <td><span class="wp-tag" :class="settleStatusTag(s.status)">{{ s.statusName }}</span></td>
+                <td class="mono">{{ s.mainMeterNo || '--' }}</td>
+                <td class="right num">{{ num(s.prevReadingKwh, 0) }}</td>
+                <td class="right num strong">{{ num(s.currentReadingKwh, 0) }}</td>
+                <td>{{ s.basisSourceName }}</td>
+                <td class="right num">{{ s.generationKwh == null ? '—' : num(s.generationKwh, 0) }}</td>
+                <td class="right num">{{ s.gridKwh == null ? '—' : num(s.gridKwh, 0) }}</td>
+                <td class="right num">{{ s.auxiliaryRate == null ? '—' : num(s.auxiliaryRate, 2) }}</td>
+                <td>
+                  <span class="wp-tag" :class="s.anomalyStatus === 'NORMAL' ? 'ok' : 'danger'">{{ s.anomalyStatusName }}</span>
+                </td>
+                <td>
+                  <el-button v-if="s.status === 'SUSPENDED'" size="small" type="warning" plain @click="openVerify(s)">校表登记</el-button>
+                  <el-button v-if="s.status === 'VERIFIED'" size="small" type="primary" plain @click="resettle(s)">补日结</el-button>
+                  <span v-else-if="s.decisionName" class="dim">{{ s.decisionName }}</span>
+                  <span v-else class="dim">--</span>
+                </td>
+                <td><el-button size="small" text @click="openTraces(s)">轨迹</el-button></td>
+              </tr>
+              <tr v-if="!settlements.length"><td colspan="13" class="empty">暂无日结记录</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </section>
@@ -237,21 +302,117 @@
       </template>
     </el-dialog>
 
-    <!-- ===== 发电量登记弹窗 ===== -->
-    <el-dialog v-model="genDialog" :title="'登记发电量 · ' + genForm.unitNo" width="520px">
-      <el-form :model="genForm" label-width="120px">
-        <el-form-item label="发电量 kWh"><el-input-number v-model="genForm.generationKwh" :min="0" :step="10000" /></el-form-item>
-        <el-form-item label="上网电量 kWh"><el-input-number v-model="genForm.gridKwh" :min="0" :step="10000" /></el-form-item>
-        <el-form-item label="运行小时 h"><el-input-number v-model="genForm.runningHours" :min="0" :precision="1" :step="1" /></el-form-item>
+    <!-- ===== 发电日结弹窗（提交表码，不直接填发电量） ===== -->
+    <el-dialog v-model="settleDialog" :title="'发电日结 · ' + settleForm.unitNo" width="600px">
+      <el-form :model="settleForm" label-width="150px">
+        <el-form-item label="统计日">
+          <el-date-picker v-model="settleForm.statDate" type="date" value-format="YYYY-MM-DD" :disabled-date="disableFuture" />
+        </el-form-item>
+        <el-form-item label="主表表号">
+          <el-input v-model="settleForm.mainMeterNo" placeholder="默认取机组当前表号，换表时填新表号" />
+        </el-form-item>
+        <el-form-item label="当日期末表码 kWh">
+          <el-input-number v-model="settleForm.currentReadingKwh" :min="0" :step="10000" :precision="2" />
+        </el-form-item>
+        <el-form-item label="期初建档基数 kWh">
+          <el-input-number v-model="settleForm.initialBaseReadingKwh" :min="0" :step="10000" :precision="2" />
+          <div class="form-hint">仅该机组首次日结需要；之后自动取上一日日结的期末表码</div>
+        </el-form-item>
+        <el-form-item label="当日运行小时 h">
+          <el-input-number v-model="settleForm.runningHours" :min="0" :max="24" :precision="1" :step="1" />
+        </el-form-item>
+        <el-form-item label="当日上网电量 kWh">
+          <el-input-number v-model="settleForm.gridKwh" :min="0" :step="10000" :precision="2" />
+          <div class="form-hint">留空则按发电量 × {{ gridRatePct }} 估算；如有上网关口表可直接填当日增量</div>
+        </el-form-item>
+        <el-divider content-position="left">表计回拨 / 更换（仅异常时填写）</el-divider>
+        <el-form-item label="表计事件">
+          <el-radio-group v-model="settleForm.meterEvent">
+            <el-radio value="">无</el-radio>
+            <el-radio value="ROLLBACK">表计回拨</el-radio>
+            <el-radio value="METER_REPLACED">更换表计</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="settleForm.meterEvent" label="处置选择">
+          <el-radio-group v-model="settleForm.decision">
+            <el-radio value="SEAL_NEW_BASE">旧表封账并启用新基数</el-radio>
+            <el-radio value="SUSPEND">暂停日结等待校表</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="settleForm.decision === 'SEAL_NEW_BASE'" label="新表表号">
+          <el-input v-model="settleForm.newMeterNo" placeholder="回拨原表定底可留空沿用原表号，换表必填新表号" />
+        </el-form-item>
+        <el-form-item v-if="settleForm.decision === 'SEAL_NEW_BASE'" label="新表启用基数 kWh">
+          <el-input-number v-model="settleForm.newMeterBaseReadingKwh" :min="0" :step="100" :precision="2" />
+        </el-form-item>
+        <el-form-item v-if="settleForm.meterEvent" label="处置理由">
+          <el-input v-model="settleForm.decisionReason" type="textarea" :rows="2" placeholder="封账/暂停的原因，必填并留痕" />
+        </el-form-item>
+        <el-form-item label="操作人">
+          <el-input v-model="settleForm.operator" placeholder="中控值班" />
+        </el-form-item>
         <div class="limit-tip">
-          理论上限 = 装机 {{ genForm.capacityMw }} MW × 1000 × 运行 {{ genForm.runningHours }} h =
-          <b class="num">{{ genForm.capacityMw * 1000 * genForm.runningHours }}</b> kWh，超出将被拒绝
+          当日发电增量 = 当日期末表码 − 期初表码；理论上限 = 装机 {{ settleForm.capacityMw }} MW × 1000
+          × 当日运行 {{ settleForm.runningHours }} h =
+          <b class="num">{{ settleForm.capacityMw * 1000 * settleForm.runningHours }}</b> kWh，超出将被拒绝。
+          同机组同日重复提交相同内容幂等返回，不会产生第二份日结。
         </div>
       </el-form>
       <template #footer>
-        <el-button @click="genDialog = false">取消</el-button>
-        <el-button type="primary" @click="submitGeneration">登记</el-button>
+        <el-button @click="settleDialog = false">取消</el-button>
+        <el-button type="primary" @click="submitSettlement">日结</el-button>
       </template>
+    </el-dialog>
+
+    <!-- ===== 校表登记弹窗 ===== -->
+    <el-dialog v-model="verifyDialog" title="校表登记 · 确认有效基数" width="520px">
+      <el-form :model="verifyForm" label-width="150px">
+        <el-form-item label="机组 / 统计日">
+          <span class="mono">{{ verifyForm.unitNo }} · {{ verifyForm.statDate }}</span>
+        </el-form-item>
+        <el-form-item label="当日期末表码 kWh">
+          <span class="num">{{ num(verifyForm.currentReadingKwh, 0) }}</span>
+        </el-form-item>
+        <el-form-item label="校表确认基数 kWh">
+          <el-input-number v-model="verifyForm.confirmedReadingKwh" :min="0" :step="100" :precision="2" />
+        </el-form-item>
+        <el-form-item label="校表说明">
+          <el-input v-model="verifyForm.verifyNote" type="textarea" :rows="2" placeholder="现场校表过程与结论" />
+        </el-form-item>
+        <el-form-item label="校表人">
+          <el-input v-model="verifyForm.operator" placeholder="校表员" />
+        </el-form-item>
+        <div class="limit-tip">
+          校表后记录变为「已校表待日结」，再对 {{ verifyForm.statDate }} 重新日结时，
+          增量按校表确认基数计算，后续日期日结随之解锁。
+        </div>
+      </el-form>
+      <template #footer>
+        <el-button @click="verifyDialog = false">取消</el-button>
+        <el-button type="warning" @click="submitVerify">确认校表</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- ===== 操作轨迹弹窗 ===== -->
+    <el-dialog v-model="traceDialog" :title="'日结操作轨迹 · ' + traceTitle" width="720px">
+      <table class="wp-table">
+        <thead>
+          <tr>
+            <th>时间</th><th>动作</th><th>状态变化</th><th>操作人</th><th>结果</th><th>说明</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="t in traceList" :key="t.id">
+            <td class="mono">{{ time(t.operateTime) }}</td>
+            <td>{{ t.action }}</td>
+            <td class="mono">{{ t.fromStatus || '—' }} → {{ t.toStatus || '—' }}</td>
+            <td>{{ t.operatorName || '--' }}</td>
+            <td><span class="wp-tag" :class="t.result === 'SUCCESS' ? 'ok' : 'danger'">{{ t.result === 'SUCCESS' ? '成功' : '已拒绝' }}</span></td>
+            <td class="dim">{{ t.detail }}</td>
+          </tr>
+          <tr v-if="!traceList.length"><td colspan="6" class="empty">暂无轨迹</td></tr>
+        </tbody>
+      </table>
     </el-dialog>
   </div>
 </template>
@@ -272,9 +433,41 @@ const frozenFurnaces = ref([])
 const frozenSet = computed(() => new Set(frozenFurnaces.value || []))
 
 const boilerDialog = ref(false)
-const genDialog = ref(false)
+const settleDialog = ref(false)
+const verifyDialog = ref(false)
+const traceDialog = ref(false)
 const boilerForm = reactive({ boilerNo: '', steamPressureMpa: 4, steamTempC: 400, evaporationTph: 70, status: 'RUNNING' })
-const genForm = reactive({ unitNo: '', capacityMw: 25, generationKwh: 15000000, gridKwh: 12500000, runningHours: 720 })
+const todayStr = () => {
+  const d = new Date()
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+const settleForm = reactive({
+  unitNo: '',
+  capacityMw: 25,
+  statDate: todayStr(),
+  mainMeterNo: '',
+  currentReadingKwh: undefined,
+  initialBaseReadingKwh: undefined,
+  runningHours: 24,
+  gridKwh: undefined,
+  meterEvent: '',
+  decision: '',
+  newMeterNo: '',
+  newMeterBaseReadingKwh: 0,
+  decisionReason: '',
+  operator: '中控值班'
+})
+const verifyForm = reactive({ id: null, unitNo: '', statDate: '', currentReadingKwh: 0, version: 0, confirmedReadingKwh: undefined, verifyNote: '', operator: '校表员' })
+
+const settlements = ref([])
+const settleUnitFilter = ref('')
+const traceList = ref([])
+const traceTitle = ref('')
+const gridRatePct = computed(() => {
+  const r = powerDict.value.defaultGridRate
+  return r == null ? '85%' : Math.round(Number(r) * 100) + '%'
+})
 
 const maxMonthly = computed(() => Math.max(...monthly.value.map((m) => Number(m.processTon) || 0), 1))
 
@@ -342,9 +535,29 @@ async function load() {
     turbines.value = r6.data || []
     powerDict.value = r7.data || {}
     frozenFurnaces.value = r8.data || []
+    await loadSettlements()
   } catch (e) {
     ElMessage.error(e.message)
   }
+}
+
+async function loadSettlements() {
+  try {
+    const res = await powerApi.settlements(settleUnitFilter.value || undefined)
+    settlements.value = res.data || []
+  } catch (e) {
+    ElMessage.error(e.message)
+  }
+}
+
+function disableFuture(date) {
+  return date.getTime() > Date.now()
+}
+
+function settleStatusTag(status) {
+  if (status === 'SETTLED') return 'ok'
+  if (status === 'VERIFIED') return 'warn'
+  return 'danger'
 }
 
 function goDisposal(f) {
@@ -394,27 +607,126 @@ async function submitBoiler() {
   }
 }
 
-function openGeneration(t) {
-  Object.assign(genForm, {
+function openSettlement(t) {
+  Object.assign(settleForm, {
     unitNo: t.unitNo,
     capacityMw: Number(t.capacityMw),
-    generationKwh: Number(t.generationKwh),
-    gridKwh: Number(t.gridKwh),
-    runningHours: Number(t.runningHours)
+    statDate: todayStr(),
+    mainMeterNo: t.meterNo || '',
+    currentReadingKwh: t.mainMeterReadingKwh == null ? undefined : Number(t.mainMeterReadingKwh),
+    initialBaseReadingKwh: undefined,
+    runningHours: 24,
+    gridKwh: undefined,
+    meterEvent: '',
+    decision: '',
+    newMeterNo: '',
+    newMeterBaseReadingKwh: 0,
+    decisionReason: '',
+    operator: '中控值班'
   })
-  genDialog.value = true
+  settleDialog.value = true
 }
 
-async function submitGeneration() {
+function resettle(s) {
+  const t = turbines.value.find((x) => x.unitNo === s.unitNo)
+  Object.assign(settleForm, {
+    unitNo: s.unitNo,
+    capacityMw: t ? Number(t.capacityMw) : 0,
+    statDate: s.statDate,
+    mainMeterNo: s.mainMeterNo || (t ? t.meterNo || '' : ''),
+    currentReadingKwh: s.currentReadingKwh == null ? undefined : Number(s.currentReadingKwh),
+    initialBaseReadingKwh: undefined,
+    runningHours: Number(s.runningHours || 24),
+    gridKwh: undefined,
+    meterEvent: '',
+    decision: '',
+    newMeterNo: '',
+    newMeterBaseReadingKwh: 0,
+    decisionReason: '',
+    operator: '中控值班'
+  })
+  ElMessage.info('该日已校表确认基数，请核对当日期末表码后提交补日结')
+  settleDialog.value = true
+}
+
+async function submitSettlement() {
+  if (!settleForm.currentReadingKwh && settleForm.currentReadingKwh !== 0) {
+    ElMessage.error('请填写主电能表当日期末表码')
+    return
+  }
+  const payload = {
+    statDate: settleForm.statDate,
+    mainMeterNo: settleForm.mainMeterNo || undefined,
+    currentReadingKwh: settleForm.currentReadingKwh,
+    runningHours: settleForm.runningHours,
+    operator: settleForm.operator
+  }
+  if (settleForm.initialBaseReadingKwh !== undefined && settleForm.initialBaseReadingKwh !== null) {
+    payload.initialBaseReadingKwh = settleForm.initialBaseReadingKwh
+  }
+  if (settleForm.gridKwh !== undefined && settleForm.gridKwh !== null) {
+    payload.gridKwh = settleForm.gridKwh
+  }
+  if (settleForm.meterEvent) {
+    payload.meterEvent = settleForm.meterEvent
+    payload.decision = settleForm.decision
+    payload.decisionReason = settleForm.decisionReason
+    if (settleForm.decision === 'SEAL_NEW_BASE') {
+      payload.newMeterNo = settleForm.newMeterNo || undefined
+      payload.newMeterBaseReadingKwh = settleForm.newMeterBaseReadingKwh
+    }
+  }
   try {
-    const res = await powerApi.register(genForm.unitNo, {
-      generationKwh: genForm.generationKwh,
-      gridKwh: genForm.gridKwh,
-      runningHours: genForm.runningHours
-    })
-    ElMessage.success(res.message || '已登记')
-    genDialog.value = false
+    const res = await powerApi.settle(settleForm.unitNo, payload)
+    ElMessage.success(res.message || '日结已完成')
+    settleDialog.value = false
     await load()
+  } catch (e) {
+    ElMessage.error(e.message)
+  }
+}
+
+function openVerify(s) {
+  Object.assign(verifyForm, {
+    id: s.id,
+    unitNo: s.unitNo,
+    statDate: s.statDate,
+    currentReadingKwh: s.currentReadingKwh,
+    version: s.version,
+    confirmedReadingKwh: s.currentReadingKwh == null ? undefined : Number(s.currentReadingKwh),
+    verifyNote: '',
+    operator: '校表员'
+  })
+  verifyDialog.value = true
+}
+
+async function submitVerify() {
+  if (verifyForm.confirmedReadingKwh === undefined || verifyForm.confirmedReadingKwh === null) {
+    ElMessage.error('请填写校表确认的有效基数')
+    return
+  }
+  try {
+    const res = await powerApi.verifyMeter(verifyForm.id, {
+      version: verifyForm.version,
+      confirmedReadingKwh: verifyForm.confirmedReadingKwh,
+      verifyNote: verifyForm.verifyNote,
+      operator: verifyForm.operator
+    })
+    ElMessage.success(res.message || '校表已登记')
+    verifyDialog.value = false
+    await loadSettlements()
+  } catch (e) {
+    ElMessage.error(e.message)
+  }
+}
+
+async function openTraces(s) {
+  traceTitle.value = `${s.unitNo} · ${s.statDate}`
+  traceList.value = []
+  traceDialog.value = true
+  try {
+    const res = await powerApi.traces(s.id)
+    traceList.value = res.data || []
   } catch (e) {
     ElMessage.error(e.message)
   }
@@ -751,5 +1063,33 @@ onMounted(load)
 
 .limit-tip b {
   color: var(--wp-warn);
+}
+
+.meter-anomaly {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: rgba(239, 83, 80, 0.09);
+  border: 1px solid rgba(239, 83, 80, 0.28);
+  font-size: 11px;
+}
+
+.settle-filter {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.wp-table tr.suspended td {
+  background: rgba(255, 183, 77, 0.06);
+}
+
+.form-hint {
+  font-size: 11px;
+  color: var(--wp-text-mute);
+  line-height: 1.4;
 }
 </style>

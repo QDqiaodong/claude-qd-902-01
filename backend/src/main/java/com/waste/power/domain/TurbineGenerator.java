@@ -11,7 +11,11 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
 /**
- * 汽轮发电机组：装机容量、发电量、上网电量、厂用电率、运行小时、统计日期。
+ * 汽轮发电机组：装机容量、当日发电增量/上网电量/厂用电率（日结口径）、运行小时，
+ * 以及主电能表与上网关口表的当前累计表码、表号与增量基数来源。
+ *
+ * 注意：generation_kwh/grid_kwh 存的是最近统计日的【当日增量】，累计值只在 *_meter_reading_kwh 表码列，
+ * 日结逻辑见 PowerDailySettlement。
  */
 @Entity
 @Table(name = "turbine_generator")
@@ -31,21 +35,37 @@ public class TurbineGenerator {
     @Column(name = "capacity_mw", precision = 8, scale = 2)
     private BigDecimal capacityMw;
 
-    /** 发电量 kWh */
+    /** 最近统计日发电增量 kWh（日结口径，不是累计表码） */
     @Column(name = "generation_kwh", precision = 14, scale = 2)
     private BigDecimal generationKwh;
 
-    /** 上网电量 kWh */
+    /** 最近统计日上网电量 kWh */
     @Column(name = "grid_kwh", precision = 14, scale = 2)
     private BigDecimal gridKwh;
 
-    /** 厂用电率 % */
+    /** 最近统计日厂用电率 % */
     @Column(name = "auxiliary_rate", precision = 5, scale = 2)
     private BigDecimal auxiliaryRate;
 
-    /** 运行小时 h */
+    /** 最近统计日运行小时 h */
     @Column(name = "running_hours", precision = 10, scale = 1)
     private BigDecimal runningHours;
+
+    /** 主电能表当前累计表码 kWh（期末抄见） */
+    @Column(name = "main_meter_reading_kwh", precision = 16, scale = 2)
+    private BigDecimal mainMeterReadingKwh;
+
+    /** 上网关口表当前累计表码 kWh */
+    @Column(name = "grid_meter_reading_kwh", precision = 16, scale = 2)
+    private BigDecimal gridMeterReadingKwh;
+
+    /** 当前主电能表表号 */
+    @Column(name = "meter_no", length = 32)
+    private String meterNo;
+
+    /** 当前增量基数来源 PREV_DAY/INIT_BASE/NEW_METER_BASE/VERIFIED_BASE */
+    @Column(name = "basis_source", length = 32)
+    private String basisSource;
 
     @Column(name = "stat_date")
     private LocalDate statDate;
@@ -118,6 +138,38 @@ public class TurbineGenerator {
 
     public void setRunningHours(BigDecimal runningHours) {
         this.runningHours = runningHours;
+    }
+
+    public BigDecimal getMainMeterReadingKwh() {
+        return mainMeterReadingKwh;
+    }
+
+    public void setMainMeterReadingKwh(BigDecimal mainMeterReadingKwh) {
+        this.mainMeterReadingKwh = mainMeterReadingKwh;
+    }
+
+    public BigDecimal getGridMeterReadingKwh() {
+        return gridMeterReadingKwh;
+    }
+
+    public void setGridMeterReadingKwh(BigDecimal gridMeterReadingKwh) {
+        this.gridMeterReadingKwh = gridMeterReadingKwh;
+    }
+
+    public String getMeterNo() {
+        return meterNo;
+    }
+
+    public void setMeterNo(String meterNo) {
+        this.meterNo = meterNo;
+    }
+
+    public String getBasisSource() {
+        return basisSource;
+    }
+
+    public void setBasisSource(String basisSource) {
+        this.basisSource = basisSource;
     }
 
     public LocalDate getStatDate() {

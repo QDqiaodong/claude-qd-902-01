@@ -59,7 +59,11 @@ export const powerApi = {
   turbines: () => get('/power/turbines'),
   dict: () => get('/power/dict'),
   adjustBoiler: (boilerNo, data) => post(`/power/boilers/${boilerNo}/adjust`, data),
-  register: (unitNo, data) => post(`/power/turbines/${unitNo}/generation`, data)
+  settlements: (unitNo) => get('/power/daily-settlements', unitNo ? { unitNo } : undefined),
+  settle: (unitNo, data) => post(`/power/turbines/${unitNo}/daily-settlement`, data),
+  verifyMeter: (id, data) => post(`/power/daily-settlements/${id}/verify`, data),
+  traces: (id) => get(`/power/daily-settlements/${id}/traces`),
+  unitTraces: (unitNo) => get(`/power/turbines/${unitNo}/meter-traces`)
 }
 
 export const envApi = {
